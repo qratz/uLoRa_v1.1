@@ -21,7 +21,7 @@ import machine
 import utime
 import urandom
 import ubinascii
-import ulora_encryption
+from ulora.ulora_encryption import AES
 
 # SX1276 operating mode settings
 _MODE_SLEEP = const(0x00)
@@ -106,22 +106,15 @@ class uLoRa:
     # SPI write buffer
     _BUFFER = bytearray(2)
 
-    def __init__(self, cs, sck, mosi, miso, irq, rst, ttn_config, datarate="SF7BW125", fport=1, channel=None):
+    def __init__(self, spi_device, cs, irq, rst, ttn_config, datarate="SF7BW125", fport=1, channel=None):
         """ Interface for a Semtech SX1276 module. Sets module up for sending to
         The Things Network.
         """
         self._irq = machine.Pin(irq, machine.Pin.IN)
         self._cs = machine.Pin(cs, machine.Pin.OUT, value=1)
-        self._rst = machine.Pin(cs, machine.Pin.OUT, value=1)
-        # Set up SPI device on Mode 0
-        self._device = machine.SPI(
-            baudrate=4000000,
-            polarity=0,
-            phase=0,
-            sck=machine.Pin(sck),
-            mosi=machine.Pin(mosi),
-            miso=machine.Pin(miso)
-        )
+        self._rst = machine.Pin(rst, machine.Pin.OUT, value=1)
+        self._device = spi_device
+        
         # Verify the version of the SX1276 module
         self._version = self._read_u8(_REG_VERSION)
         if self._version != 18:
@@ -138,16 +131,16 @@ class uLoRa:
         self._fport = fport
         # Set regional frequency plan
         if "US" in ttn_config.country:
-            from ttn_usa import TTN_FREQS
+            from ulora.ttn_usa import TTN_FREQS
             self._frequencies = TTN_FREQS
         elif ttn_config.country == "AS":
-            from ttn_as import TTN_FREQS
+            from ulora.ttn_as import TTN_FREQS
             self._frequencies = TTN_FREQS
         elif ttn_config.country == "AU":
-            from ttn_au import TTN_FREQS
+            from ulora.ttn_au import TTN_FREQS
             self._frequencies = TTN_FREQS
         elif ttn_config.country == "EU":
-            from ttn_eu import TTN_FREQS
+            from ulora.ttn_eu import TTN_FREQS
             self._frequencies = TTN_FREQS
         else:
             raise TypeError("Country Code Incorrect/Unsupported")
@@ -169,6 +162,33 @@ class uLoRa:
             self._write_u8(pair[0], pair[1])
         # Give the uLoRa object ttn configuration
         self._ttn_config = ttn_config
+        
+    @classmethod    
+    def from_pins(cls, cs, sck, mosi, miso, irq, rst, ttn_config, datarate="SF7BW125", fport=1, channel=None, spi_id=None):
+        """ Interface for a Semtech SX1276 module. Sets module up for sending to
+        The Things Network.
+        """
+        # Set up SPI device on Mode 0
+        if (spi_id == None):
+            spi_device = machine.SPI(
+                baudrate=4000000,
+                polarity=0,
+                phase=0,
+                sck=machine.Pin(sck),
+                mosi=machine.Pin(mosi),
+                miso=machine.Pin(miso)
+            )
+        else:
+            spi_device = machine.SPI(
+                spi_id,
+                baudrate=4000000,
+                polarity=0,
+                phase=0,
+                sck=machine.Pin(sck),
+                mosi=machine.Pin(mosi),
+                miso=machine.Pin(miso)
+            )
+        return cls(spi_device, cs, irq, rst, ttn_config, datarate, fport, channel)
 
     def send_data(self, data, data_length, frame_counter, timeout=2):
         """ Function to assemble and send data.
@@ -180,7 +200,7 @@ class uLoRa:
         enc_data[0:data_length] = data[0:data_length]
         # Encrypt data (enc_data is overwritten in this function)
         self.frame_counter = frame_counter
-        aes = ulora_encryption.AES(
+        aes = AES(
             self._ttn_config.device_address,
             self._ttn_config.app_key,
             self._ttn_config.network_key,
